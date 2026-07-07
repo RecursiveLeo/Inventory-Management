@@ -1,17 +1,44 @@
+# cli.py
 import requests
 
 API_BASE = "http://127.0.0.1:5000"
 
+
+def _print_table(rows, headers):
+    if not rows:
+        print("No items found")
+        return
+
+    widths = [len(header) for header in headers]
+    for row in rows:
+        for index, value in enumerate(row):
+            widths[index] = max(widths[index], len(str(value)))
+
+    def fmt_row(values):
+        return " | ".join(str(value).ljust(widths[index]) for index, value in enumerate(values))
+
+    print(fmt_row(headers))
+    print("-+-".join("-" * width for width in widths))
+    for row in rows:
+        print(fmt_row(row))
+
+
 def list_inventory():
     resp = requests.get(f"{API_BASE}/inventory")
-    print(resp.json())
+    items = resp.json()
+    rows = [[item.get("id", ""), item.get("product_name", ""), item.get("stock", ""), item.get("price", "")] for item in items]
+    _print_table(rows, ["ID", "Product", "Stock", "Price"])
 
 
 def view_item():
     item_id = int(input("Enter item ID: "))
     resp = requests.get(f"{API_BASE}/inventory/{item_id}")
-    print(resp.status_code, resp.json())
-
+    if resp.status_code != 200:
+        print(resp.status_code, resp.json())
+        return
+    item = resp.json()
+    rows = [[item.get("id", ""), item.get("product_name", ""), item.get("stock", ""), item.get("price", "")]]
+    _print_table(rows, ["ID", "Product", "Stock", "Price"])
 
 def add_item():
     name = input("Product name: ")
@@ -27,7 +54,6 @@ def add_item():
     resp = requests.post(f"{API_BASE}/inventory", json=data)
     print(resp.status_code, resp.json())
 
-
 def update_item():
     item_id = int(input("Item ID to update: "))
     field = input("Field to update (price/stock): ")
@@ -39,12 +65,10 @@ def update_item():
     resp = requests.patch(f"{API_BASE}/inventory/{item_id}", json={field: value})
     print(resp.status_code, resp.json())
 
-
 def delete_item():
     item_id = int(input("Item ID to delete: "))
     resp = requests.delete(f"{API_BASE}/inventory/{item_id}")
     print(resp.status_code)
-
 
 def import_from_api():
     choice = input("Search by (b)arcode or (n)ame? ")
@@ -55,7 +79,6 @@ def import_from_api():
         name = input("Product name: ")
         resp = requests.post(f"{API_BASE}/inventory/import/name/{name}")
     print(resp.status_code, resp.json())
-
 
 def main():
     while True:

@@ -1,50 +1,102 @@
-inventory = [
-    {
-        "id": 1,
-        "barcode": "1234567890123",
-        "product_name": "Organic Almond Milk",
-        "brands": "Silk",
-        "ingredients_text": "Filtered water, almonds, cane sugar",
-        "stock": 10,
-        "price": 4.99
-    },
-    {
-        "id": 2,
-        "barcode": "9876543210987",
-        "product_name": "Whole Grain Bread",
-        "brands": "Nature's Own",
-        "ingredients_text": "Whole wheat flour, water, yeast, salt",
-        "stock": 25,
-        "price": 2.49
-    }
-]
+"""In-memory 'database' for inventory items.
+
+Each item is a dict shaped roughly like:
+{
+    "id": int,
+    "name": str,
+    "brand": str,
+    "barcode": str | None,
+    "category": str | None,
+    "price": float,
+    "quantity": int,
+    "ingredients_text": str | None,
+    "source": "manual" | "openfoodfacts",
+}
+"""
+
+from itertools import count
+
+_id_counter = count(1)
+_inventory = []
+
+
+def _next_id():
+    return next(_id_counter)
+
+
+def reset():
+    """Clear the store and restart the id counter (mainly for tests)."""
+    global _id_counter
+    _inventory.clear()
+    _id_counter = count(1)
 
 
 def get_all_items():
-    return inventory
+    return list(_inventory)
 
 
-def get_item_by_id(item_id: int):
-    return next((item for item in inventory if item["id"] == item_id), None)
+def get_item_by_id(item_id):
+    for item in _inventory:
+        if item["id"] == item_id:
+            return item
+    return None
 
 
-def add_item(item: dict):
-    new_id = max([i["id"] for i in inventory], default=0) + 1
-    item["id"] = new_id
-    inventory.append(item)
+def add_item(data):
+    """Create a new item from a dict of fields and store it.
+
+    Required: name
+    Optional: brand, barcode, category, price, quantity, ingredients_text, source
+    """
+    if not data.get("name"):
+        raise ValueError("'name' is required to add an inventory item.")
+
+    item = {
+        "id": _next_id(),
+        "name": data["name"],
+        "brand": data.get("brand"),
+        "barcode": data.get("barcode"),
+        "category": data.get("category"),
+        "price": float(data.get("price", 0) or 0),
+        "quantity": int(data.get("quantity", 0) or 0),
+        "ingredients_text": data.get("ingredients_text"),
+        "source": data.get("source", "manual"),
+    }
+    _inventory.append(item)
     return item
 
 
-def update_item(item_id: int, updates: dict):
+def update_item(item_id, data):
+    """Partially update an existing item. Returns the updated item, or None
+    if no item with that id exists."""
     item = get_item_by_id(item_id)
-    if not item:
+    if item is None:
         return None
-    item.update(updates)
+
+    for field in (
+        "name",
+        "brand",
+        "barcode",
+        "category",
+        "price",
+        "quantity",
+        "ingredients_text",
+        "source",
+    ):
+        if field in data and data[field] is not None:
+            if field == "price":
+                item[field] = float(data[field])
+            elif field == "quantity":
+                item[field] = int(data[field])
+            else:
+                item[field] = data[field]
+
     return item
 
 
-def delete_item(item_id: int):
-    global inventory
-    before = len(inventory)
-    inventory = [i for i in inventory if i["id"] != item_id]
-    return len(inventory) < before
+def delete_item(item_id):
+    item = get_item_by_id(item_id)
+    if item is None:
+        return False
+    _inventory.remove(item)
+    return True

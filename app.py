@@ -1,82 +1,108 @@
-from flask import Flask, jsonify, request
-from inventory_data import (
-    get_all_items, get_item_by_id,
-    add_item, update_item, delete_item
-)
-from external_api import fetch_product_by_barcode, fetch_product_by_name
+from flask import Flask, request, jsonify, make_response
+
+import inventory_data as db
+from external_api import fetch_product_by_barcode, fetch_product_by_name, ExternalAPIError
 
 app = Flask(__name__)
 
+
+def error_response(message, status=400):
+    return make_response(jsonify({"error": message}), status)
+
+
+# ---------------------------------------------------------------------------
+# CRUD routes
+# ---------------------------------------------------------------------------
+
+
 @app.route("/inventory", methods=["GET"])
 def get_inventory():
-    return jsonify(get_all_items()), 200
+    return jsonify(db.get_all_items()), 200
+
 
 @app.route("/inventory/<int:item_id>", methods=["GET"])
 def get_inventory_item(item_id):
-    item = get_item_by_id(item_id)
-    if not item:
-        return jsonify({"error": "Item not found"}), 404
+    item = db.get_item_by_id(item_id)
+    if item is None:
+        return error_response("Item not found", 404)
     return jsonify(item), 200
+
 
 @app.route("/inventory", methods=["POST"])
 def create_inventory_item():
-    data = request.get_json()
-    if not data or "product_name" not in data:
-        return jsonify({"error": "Invalid data"}), 400
-    item = add_item({
-        "barcode": data.get("barcode"),
-        "product_name": data["product_name"],
-        "brands": data.get("brands"),
-        "ingredients_text": data.get("ingredients_text"),
-        "stock": data.get("stock", 0),
-        "price": data.get("price", 0.0),
-    })
+    data = request.get_json(silent=True) or {}
+    try:
+        item = db.add_item(data)
+    except ValueError as exc:
+        return error_response(str(exc), 400)
     return jsonify(item), 201
+
 
 @app.route("/inventory/<int:item_id>", methods=["PATCH"])
-def patch_inventory_item(item_id):
-    data = request.get_json() or {}
-    item = update_item(item_id, data)
-    if not item:
-        return jsonify({"error": "Item not found"}), 404
+def update_inventory_item(item_id):
+    data = request.get_json(silent=True) or {}
+    item = db.update_item(item_id, data)
+    if item is None:
+        return error_response("Item not found", 404)
     return jsonify(item), 200
 
+
 @app.route("/inventory/<int:item_id>", methods=["DELETE"])
-def delete_inventory_item_route(item_id):
-    deleted = delete_item(item_id)
+def delete_inventory_item(item_id):
+    deleted = db.delete_item(item_id)
     if not deleted:
-        return jsonify({"error": "Item not found"}), 404
+        return error_response("Item not found", 404)
     return "", 204
 
+
+# ---------------------------------------------------------------------------
+# External API helper routes
+# ---------------------------------------------------------------------------
+
+
+@app.route("/products/barcode/<barcode>", methods=["GET"])
+def lookup_product_by_barcode(barcode):
+    try:
+        product = fetch_product_by_barcode(barcode)
+    except ExternalAPIError as exc:
+        return error_response(str(exc), 502)
+
+    if product is None:
+        return error_response("No product found for that barcode", 404)
+    return jsonify(product), 200
+
+
+@app.route("/products/search", methods=["GET"])
+def search_products_by_name():
+    name = request.args.get("name")
+    if not name:
+        return error_response("Query parameter 'name' is required", 400)
+
+    try:
+        products = fetch_product_by_name(name)
+    except ExternalAPIError as exc:
+        return error_response(str(exc), 502)
+
+    return jsonify(products), 200
+
+
 @app.route("/inventory/import/barcode/<barcode>", methods=["POST"])
-def import_by_barcode(barcode):
-    product = fetch_product_by_barcode(barcode)
-    if not product:
-        return jsonify({"error": "Product not found in external API"}), 404
-    item = add_item({
-        "barcode": barcode,
-        "product_name": product.get("product_name"),
-        "brands": product.get("brands"),
-        "ingredients_text": product.get("ingredients_text"),
-        "stock": 0,
-        "price": 0.0,
-    })
+def import_inventory_item_by_barcode(barcode):
+    """Fetch a product from OpenFoodFacts and add it straight to inventory."""
+    try:
+        product = fetch_product_by_barcode(barcode)
+    except ExternalAPIError as exc:
+        return error_response(str(exc), 502)
+
+    if product is None:
+        return error_response("No product found for that barcode", 404)
+
+    overrides = request.get_json(silent=True) or {}
+    product.update({k: v for k, v in overrides.items() if v is not None})
+
+    item = db.add_item(product)
     return jsonify(item), 201
 
-@app.route("/inventory/import/name/<name>", methods=["POST"])
-def import_by_name(name):
-    product = fetch_product_by_name(name)
-    if not product:
-        return jsonify({"error": "Product not found in external API"}), 404
-    item = add_item({
-        "barcode": product.get("barcode"),
-        "product_name": product.get("product_name"),
-        "brands": product.get("brands"),
-        "ingredients_text": product.get("ingredients_text"),
-        "stock": 0,
-        "price": 0.0,
-    })
-    return jsonify(item), 201
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    app.run(debug=True, port=5555)

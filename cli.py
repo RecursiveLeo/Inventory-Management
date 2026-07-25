@@ -1,101 +1,144 @@
-# cli.py
 import requests
 
-API_BASE = "http://127.0.0.1:5000"
+BASE_URL = "http://localhost:5000"
 
 
-def _print_table(rows, headers):
-    if not rows:
-        print("No items found")
-        return
-
-    widths = [len(header) for header in headers]
-    for row in rows:
-        for index, value in enumerate(row):
-            widths[index] = max(widths[index], len(str(value)))
-
-    def fmt_row(values):
-        return " | ".join(str(value).ljust(widths[index]) for index, value in enumerate(values))
-
-    print(fmt_row(headers))
-    print("-+-".join("-" * width for width in widths))
-    for row in rows:
-        print(fmt_row(row))
-
-
-def list_inventory():
-    resp = requests.get(f"{API_BASE}/inventory")
+def view_all():
+    resp = requests.get(f"{BASE_URL}/inventory")
     items = resp.json()
-    rows = [[item.get("id", ""), item.get("product_name", ""), item.get("stock", ""), item.get("price", "")] for item in items]
-    _print_table(rows, ["ID", "Product", "Stock", "Price"])
-
-
-def view_item():
-    item_id = int(input("Enter item ID: "))
-    resp = requests.get(f"{API_BASE}/inventory/{item_id}")
-    if resp.status_code != 200:
-        print(resp.status_code, resp.json())
+    if not items:
+        print("Inventory is empty.")
         return
-    item = resp.json()
-    rows = [[item.get("id", ""), item.get("product_name", ""), item.get("stock", ""), item.get("price", "")]]
-    _print_table(rows, ["ID", "Product", "Stock", "Price"])
+    for item in items:
+        print(f"[{item['id']}] {item['product_name']} ({item['brands']}) - ${item['price']} | stock: {item['stock']}")
+
+
+def view_one():
+    item_id = input("Enter item ID: ").strip()
+    if not item_id.isdigit():
+        print("Invalid ID.")
+        return
+    resp = requests.get(f"{BASE_URL}/inventory/{item_id}")
+    if resp.status_code == 404:
+        print("Item not found.")
+        return
+    for key, value in resp.json().items():
+        print(f"{key}: {value}")
+
 
 def add_item():
-    name = input("Product name: ")
-    barcode = input("Barcode (optional): ")
-    price = float(input("Price: "))
-    stock = int(input("Stock: "))
-    data = {
-        "product_name": name,
-        "barcode": barcode or None,
-        "price": price,
-        "stock": stock,
-    }
-    resp = requests.post(f"{API_BASE}/inventory", json=data)
-    print(resp.status_code, resp.json())
+    print("Add item — leave barcode blank to enter details manually.")
+    barcode = input("Barcode (optional): ").strip() or None
+    payload = {"barcode": barcode}
+
+    if not barcode:
+        payload["product_name"] = input("Product name: ").strip()
+        payload["brands"] = input("Brand: ").strip()
+
+    try:
+        payload["price"] = float(input("Price: ").strip() or 0)
+        payload["stock"] = int(input("Stock: ").strip() or 0)
+    except ValueError:
+        print("Price/stock must be numbers.")
+        return
+
+    payload["category"] = input("Category: ").strip() or "uncategorized"
+
+    resp = requests.post(f"{BASE_URL}/inventory", json=payload)
+    if resp.status_code == 201:
+        print("Item added:", resp.json())
+    else:
+        print("Error:", resp.json().get("error"))
+
 
 def update_item():
-    item_id = int(input("Item ID to update: "))
-    field = input("Field to update (price/stock): ")
-    value = input("New value: ")
-    if field == "price":
-        value = float(value)
-    elif field == "stock":
-        value = int(value)
-    resp = requests.patch(f"{API_BASE}/inventory/{item_id}", json={field: value})
-    print(resp.status_code, resp.json())
+    item_id = input("Enter item ID to update: ").strip()
+    if not item_id.isdigit():
+        print("Invalid ID.")
+        return
+
+    print("Leave blank to skip a field.")
+    price = input("New price: ").strip()
+    stock = input("New stock: ").strip()
+
+    payload = {}
+    try:
+        if price:
+            payload["price"] = float(price)
+        if stock:
+            payload["stock"] = int(stock)
+    except ValueError:
+        print("Price/stock must be numbers.")
+        return
+
+    if not payload:
+        print("Nothing to update.")
+        return
+
+    resp = requests.patch(f"{BASE_URL}/inventory/{item_id}", json=payload)
+    if resp.status_code == 200:
+        print("Item updated:", resp.json())
+    else:
+        print("Error:", resp.json().get("error"))
+
 
 def delete_item():
-    item_id = int(input("Item ID to delete: "))
-    resp = requests.delete(f"{API_BASE}/inventory/{item_id}")
-    print(resp.status_code)
-
-def import_from_api():
-    choice = input("Search by (b)arcode or (n)ame? ")
-    if choice == "b":
-        barcode = input("Barcode: ")
-        resp = requests.post(f"{API_BASE}/inventory/import/barcode/{barcode}")
+    item_id = input("Enter item ID to delete: ").strip()
+    if not item_id.isdigit():
+        print("Invalid ID.")
+        return
+    resp = requests.delete(f"{BASE_URL}/inventory/{item_id}")
+    if resp.status_code == 204:
+        print("Item deleted.")
     else:
-        name = input("Product name: ")
-        resp = requests.post(f"{API_BASE}/inventory/import/name/{name}")
-    print(resp.status_code, resp.json())
+        print("Error:", resp.json().get("error"))
+
+
+def find_on_api():
+    print("1. Search by barcode")
+    print("2. Search by product name")
+    choice = input("Choice: ").strip()
+
+    if choice == "1":
+        barcode = input("Barcode: ").strip()
+        resp = requests.get(f"{BASE_URL}/lookup/barcode/{barcode}")
+        if resp.status_code == 200:
+            product = resp.json()
+            print(f"Name: {product.get('product_name')}")
+            print(f"Brand: {product.get('brands')}")
+            print(f"Ingredients: {product.get('ingredients_text')}")
+        else:
+            print("Not found.")
+    elif choice == "2":
+        name = input("Product name: ").strip()
+        resp = requests.get(f"{BASE_URL}/lookup/search", params={"name": name})
+        products = resp.json()
+        if not products:
+            print("No results.")
+            return
+        for p in products:
+            print(f"- {p.get('product_name')} ({p.get('brands')}) barcode: {p.get('code')}")
+    else:
+        print("Invalid choice.")
+
 
 def main():
-    while True:
-        print("""
-1. List inventory
-2. View item
-3. Add item
-4. Update item
+    menu = """
+1. View all inventory
+2. View item details
+3. Add new item
+4. Update item price/stock
 5. Delete item
-6. Import from external API
+6. Find item on OpenFoodFacts
 0. Exit
-""")
-        choice = input("Choose option: ")
+"""
+    while True:
+        print(menu)
+        choice = input("Choice: ").strip()
         if choice == "1":
-            list_inventory()
+            view_all()
         elif choice == "2":
-            view_item()
+            view_one()
         elif choice == "3":
             add_item()
         elif choice == "4":
@@ -103,9 +146,12 @@ def main():
         elif choice == "5":
             delete_item()
         elif choice == "6":
-            import_from_api()
+            find_on_api()
         elif choice == "0":
             break
+        else:
+            print("Invalid choice.")
+
 
 if __name__ == "__main__":
     main()
